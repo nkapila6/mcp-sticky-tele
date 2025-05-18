@@ -3,19 +3,24 @@ import asyncio
 import requests
 from io import BytesIO
 from PIL import Image
+import os
+from dotenv import load_dotenv
+print(load_dotenv())
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-TOKEN = ""
+# for PythonAnywhere, comment out if running locally.
+from aiogram.client.session.aiohttp import AiohttpSession
+session = AiohttpSession(proxy='http://proxy.server:3128')
 
-# Initialize bot and dispatcher
-bot = Bot(token=TOKEN)
+
+logging.basicConfig(level=logging.INFO)
+TOKEN = os.getenv('TOKEN')
+bot = Bot(token=TOKEN, session=session)
 dp = Dispatcher()
 
-# Start command handler
+# /start command
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     await message.answer(
