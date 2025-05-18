@@ -28,17 +28,87 @@ async def cmd_start(message: types.Message):
         "Send me any image URL and I'll instantly convert it to a Telegram sticker."
     )
 
-# Help command handler
+# /help command handler
 @dp.message(Command("help"))
 async def cmd_help(message: types.Message):
     await message.answer(
         "🔍 How to use this bot:\n\n"
-        "1. Simply send me an image URL starting with http:// or https://\n"
+        "1. Simply send me an image or an image URL starting with http:// or https://\n"
         "2. I'll immediately return it as a sticker\n"
         "3. You can save or forward the sticker to your chats\n\n"
         "That's it! No sticker packs or extra steps needed."
     )
 
+# process image to sticker
+async def process_image_to_sticker(image_data, message, processing_message):
+    """
+    Process image data into a Telegram sticker.
+
+    Args:
+        image_data: Binary image data
+        message: Original message object
+        processing_message: Processing notification message object
+    """
+    try:
+        img = Image.open(BytesIO(image_data))
+        # resize image
+        width, height = img.size
+        if width > height:
+            new_width = 512
+            new_height = int(height * (512 / width))
+        else:
+            new_height = 512
+            new_width = int(width * (512 / height))
+
+        # https://www.geeksforgeeks.org/python-pil-image-resize-method/
+        img = img.resize((new_width, new_height), Image.LANCZOS)
+
+        output = BytesIO()
+        img.save(output, format="WEBP", optimize=True)
+        if output.tell() > 512 * 1024:
+            output = BytesIO()
+            quality = 95
+
+            while quality > 30:
+                output.seek(0)
+                output.truncate(0)
+                img.save(output, format="WEBP", optimize=True, quality=quality)
+                if output.tell() <= 512 * 1024:
+                    break
+                quality -= 5
+
+        output.seek(0)
+
+        # delete earlier msg
+        await bot.delete_message(
+            chat_id=message.chat.id,
+            message_id=processing_message.message_id
+        )
+
+        # Send sticker
+        from aiogram.types import BufferedInputFile
+        await bot.send_sticker(
+            chat_id=message.chat.id,
+            sticker=BufferedInputFile(output.getvalue(), filename="sticker.webp")
+        )
+
+        # Send success message
+        await message.answer(
+            "✅ Sticker created!\n\n"
+            "You can now forward this sticker to any chat.\n"
+            "To save it to your Favorites, tap and hold the sticker, then select 'Add to Favorites'."
+        )
+        return True
+    except Exception as e:
+        await bot.edit_message_text(
+            f"❌ Failed to process image: {str(e)}",
+            chat_id=message.chat.id,
+            message_id=processing_message.message_id
+        )
+        logging.error(f"Image processing error: {str(e)}")
+        return False
+
+# if message starts with URL
 @dp.message(F.text.startswith(("http://", "https://")))
 async def process_url(message: types.Message):
     url = message.text
@@ -55,64 +125,22 @@ async def process_url(message: types.Message):
             )
             return
         
-        # rezise
-        try:
-            img = Image.open(BytesIO(response.content))
-            width, height = img.size
-            if width > height:
-                new_width = 512
-                new_height = int(height * (512 / width))
-            else:
-                new_height = 512
-                new_width = int(width * (512 / height))
+        # check if is not img
+        content_type = response.headers.get('Content-Type', '').lower()
+        is_image = content_type.startswith('image/')
 
-            # https://www.geeksforgeeks.org/python-pil-image-resize-method/
-            img = img.resize((new_width, new_height), Image.LANCZOS)
-
-            # save image
-            output = BytesIO()
-            img.save(output, format="WEBP", optimize=True)
-            
-            # check file size
-            if output.tell() > 512 * 1024:
-                output = BytesIO()
-                quality = 95
-                
-                while quality > 30:
-                    output.seek(0)
-                    output.truncate(0)
-                    img.save(output, format="WEBP", optimize=True, quality=quality)
-                    if output.tell() <= 512 * 1024:
-                        break
-                    quality -= 5
-            
-            output.seek(0)
-            
-            # delete processing message
-            await bot.delete_message(chat_id=message.chat.id, message_id=processing_message.message_id)
-            
-            from aiogram.types import BufferedInputFile
-            # send as sticker
-            await bot.send_sticker(
-                chat_id=message.chat.id,
-                sticker=BufferedInputFile(output.getvalue(), filename="sticker.webp")
-            )
-            
-            # thamk yu guten tag gudbye
-            await message.answer(
-                "✅ Sticker created!\n\n"
-                "You can now forward this sticker to any chat.\n"
-                "To save it to your Favorites, tap and hold the sticker, then select 'Add to Favorites'."
-            )
-            
-        except Exception as e:
+        if not is_image and not (
+            url.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif'))
+        ):
             await bot.edit_message_text(
-                f"❌ Failed to process image: {str(e)}",
+                "❌ The URL doesn't point to a supported image format. Please send a JPG, JPEG, PNG, WEBP, or GIF image URL.",
                 chat_id=message.chat.id,
                 message_id=processing_message.message_id
             )
-            logging.error(f"Image processing error: {str(e)}")
-            
+            return
+
+        # process img
+        await process_image_to_sticker(response.content, message, processing_message)
     except Exception as e:
         await bot.edit_message_text(
             f"❌ Error: {str(e)}",
@@ -121,10 +149,34 @@ async def process_url(message: types.Message):
         )
         logging.error(f"Request error: {str(e)}")
 
+# if url can't be downloaded thanks to PythonAnywhere's allow list :(, 
+# allow user to send attached image
+@dp.message(F.photo)
+async def process_picture(message: types.Message):
+    processing_message = await message.answer("⏳ Processing image...")
+
+    try:
+        photo = message.photo[-1]
+        file_id = photo.file_id
+        file = await bot.get_file(file_id)
+        file_path = file.file_path
+
+        # fetch from attachment and process
+        file_content = await bot.download_file(file_path)
+        await process_image_to_sticker(file_content.read(), message, processing_message)
+
+    except Exception as e:
+        await bot.edit_message_text(
+            f"❌ Error: {str(e)}. If the file fails to download, please send it as an attachment.",
+            chat_id=message.chat.id,
+            message_id=processing_message.message_id
+        )
+        logging.error(f"File download error: {str(e)}.")
+
 # if img isnt url
 @dp.message(F.text)
 async def handle_text(message: types.Message):
-    await message.answer("Please send a valid image URL starting with http:// or https://")
+    await message.answer("Please send attach an image or send a valid Image URL starting with http:// or https://")
 
 async def main():
     await dp.start_polling(bot)
