@@ -16,7 +16,7 @@ from aiogram.filters import Command
 
 logging.basicConfig(level=logging.INFO)
 TOKEN = os.getenv('TOKEN')
-bot = Bot(token=TOKEN, session=session)
+bot = Bot(token=TOKEN) #, session=session)
 dp = Dispatcher()
 
 # /start command
