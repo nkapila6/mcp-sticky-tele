@@ -11,9 +11,8 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 
 # for PythonAnywhere, comment out if running locally.
-from aiogram.client.session.aiohttp import AiohttpSession
-session = AiohttpSession(proxy='http://proxy.server:3128')
-
+# from aiogram.client.session.aiohttp import AiohttpSession
+# session = AiohttpSession(proxy='http://proxy.server:3128')
 
 logging.basicConfig(level=logging.INFO)
 TOKEN = os.getenv('TOKEN')
